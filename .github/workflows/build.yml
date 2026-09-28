@@ -1,0 +1,44 @@
+name: Build .deb
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+  release:
+    types: [ published ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Installs Theos + a Linux (Swift) toolchain + an iOS SDK.
+      # De-facto standard action in the jailbreak-tweak community.
+      - name: Set up Theos
+        uses: Randomblock1/theos-action@v1
+
+      - name: Build rootless package
+        run: make package FINALPACKAGE=1
+
+      - name: List output
+        run: ls -l packages/
+
+      # Downloadable from the workflow run page (Actions tab -> run -> Artifacts).
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StatusBarMover-deb
+          path: packages/*.deb
+          if-no-files-found: error
+
+      # When you publish a GitHub Release, the .deb is attached to it too.
+      - name: Attach .deb to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*.deb
