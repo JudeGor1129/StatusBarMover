@@ -1,8 +1,8 @@
 Package: com.minis.statusbarmover
 Name: StatusBarMover
-Version: 1.0.1
+Version: 1.0.2
 Architecture: iphoneos-arm64
-Description: Move each status bar icon independently with a per-item X/Y offset. Includes a Settings pane and live auto-discovery of icons. Built for iOS 15.x rootless (XinaA15 / xina2). SpringBoard-only, crash-hardened.
+Description: Move each status bar icon independently with a per-item X/Y offset (applied as a non-destructive transform). Includes a Settings pane, live icon discovery, and a kill-switch file. SpringBoard-only, crash-hardened. iOS 15.x rootless (XinaA15 / xina2).
 Maintainer: you
 Author: you
 Section: Tweaks
