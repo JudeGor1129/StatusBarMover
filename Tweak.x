@@ -1,49 +1,59 @@
 #import <UIKit/UIKit.h>
 #import <notify.h>
+#import <unistd.h>
 
 // ============================================================================
-//  StatusBarMover 1.0.2  —  per-icon offset for the iOS status bar
+//  StatusBarMover 1.0.4  —  per-icon offset for the iOS status bar
 //  Target: iOS 15.x, rootless (XinaA15 / xina2)
 //
-//  1.0.2 ROOT-CAUSE rework (Safe Mode persisted through 1.0.1 despite @try,
-//  which means the crash was NOT an ObjC exception — it was a hard crash or a
-//  watchdog hang). Two concrete causes are removed:
+//  WHY 1.0.0–1.0.3 all Safe-Mode'd (diagnosed from two SpringBoard .ips logs):
+//    Both crashes were EXC_BAD_ACCESS / SIGBUS happening INSIDE MY %ctor while
+//    dyld was still running image initializers (dyld4::...findAndRunAll-
+//    Initializers -> jbinjector -> my constructor):
+//      * v1.0.2: CFPreferencesAppSynchronize -> CFStringGetCharacterAtIndex 💥
+//      * v1.0.3: NSFileManager fileExistsAtPath: -> getFileSystemRepresentation 💥
+//    Common cause: messaging Foundation/CoreFoundation — which reads the
+//    characters of my `@"..."` constant strings — during the dyld-init phase,
+//    before the injected dylib's Objective-C constant-string class reference is
+//    bound. That is a SIGBUS (a hardware signal), which is why the @try blocks
+//    in 1.0.1/1.0.2 never caught it.
 //
-//   (A) LAYOUT FEEDBACK LOOP  ->  we no longer touch `frame` at all.
-//       The offset is applied with a LAYER TRANSLATION (self.transform). A
-//       transform is composited on top of layout and does NOT feed back into
-//       the frame layout pass, so SpringBoard can't get stuck relaying-out and
-//       trip the watchdog. %orig(frame) is always called UNMODIFIED.
+//  THE FIX (1.0.4):
+//    * NO Foundation / CoreFoundation work at load time. The %ctor does ONLY
+//      `%init;` (Logos hook registration — the same MSHookMessageEx every tweak
+//      safely runs at load).
+//    * ALL initialization (kill-switch check, prefs, reload observer) is
+//      deferred via dispatch_once to the FIRST status-bar layout, which happens
+//      long after SpringBoard has finished booting and the runtime is fully up.
+//    * The kill-switch is checked with POSIX access() on a plain C string, so
+//      even the safety mechanism has zero ObjC-constant-string dependency.
+//    * Offsets are still applied as a non-destructive transform (never frame),
+//      so there is no layout-feedback watchdog risk.
 //
-//   (B) SIGSEGV FROM performSelector: ON PRIMITIVE-RETURNING METHODS  ->  we
-//       read the item identifier with KVC (valueForKey:). KVC boxes primitives
-//       into NSNumber (so a non-object return can't be dereferenced as a
-//       pointer) and raises a CATCHABLE NSException for unknown keys. No more
-//       raw performSelector: on private accessors.
-//
-//   Plus: a kill-switch file lets you neuter the tweak WITHOUT uninstalling
-//   (useful to escape a crash loop):
-//       /var/mobile/Library/Preferences/com.minis.statusbarmover.disable
+//  KILL-SWITCH (escape a crash loop without uninstalling):
+//    touch /var/mobile/Library/Preferences/com.minis.statusbarmover.disable
+//    …then respring. Delete the file to re-enable.
 // ============================================================================
 
 @interface _UIStatusBarItemView : UIView
 @end
 
-static NSString *const kAppID     = @"com.minis.statusbarmover";
-static NSString *const kReload    = @"com.minis.statusbarmover/reload";
+static NSString *const kAppID  = @"com.minis.statusbarmover";
+static NSString *const kReload = @"com.minis.statusbarmover/reload";
 static NSString *const kItemsFile =
     @"/var/mobile/Library/Preferences/com.minis.statusbarmover.items.plist";
-static NSString *const kKillFile  =
-    @"/var/mobile/Library/Preferences/com.minis.statusbarmover.disable";
+// C string on purpose — no NSString messaging needed for the safety check.
+static const char *kKillPathC =
+    "/var/mobile/Library/Preferences/com.minis.statusbarmover.disable";
 
-static BOOL             gKill    = NO;     // hard bail-out (kill file present)
-static BOOL             gEnabled = YES;
-static BOOL             gLoaded  = NO;     // prefs loaded yet? (deferred)
-static NSDictionary    *gOffsets = nil;    // key -> @{ @"x":num, @"y":num }
-static NSMutableSet    *gSeen    = nil;    // identifiers (main thread only)
-static BOOL             gWritePending = NO;
+static BOOL              gKill    = NO;
+static BOOL              gEnabled = YES;
+static NSDictionary     *gOffsets = nil;
+static NSMutableSet     *gSeen    = nil;
+static BOOL              gWritePending = NO;
+static dispatch_once_t   gInitOnce;
 
-// ---- preferences -----------------------------------------------------------
+// ---- preferences (only ever called post-boot) ------------------------------
 
 static void LoadPrefs(void) {
     @try {
@@ -70,20 +80,9 @@ static void LoadPrefs(void) {
             e[axis] = all[k];
         }
         gOffsets = [parsed copy];
-        gLoaded = YES;
     } @catch (__unused NSException *e) {
         gOffsets = @{};
     }
-}
-
-// Load prefs lazily, the FIRST time a status bar item lays out — i.e. well
-// after SpringBoard has finished process init. Calling CFPreferences from a
-// dylib %ctor (during dyld initializer execution) is what crashed SpringBoard
-// (SIGBUS in CFPreferencesAppSynchronize): the preferences subsystem is not
-// safe to touch that early. Deferring it fixes the boot crash loop.
-static void SBMEnsureLoaded(void) {
-    if (gLoaded) return;
-    LoadPrefs();
 }
 
 // ---- throttled, race-free discovery persistence ----------------------------
@@ -125,6 +124,22 @@ static void ReloadNotify(CFNotificationCenterRef c, void *o, CFStringRef n,
     });
 }
 
+// ---- deferred, one-time initialization (runs at first layout, post-boot) ----
+
+static void SBMEnsureLoaded(void) {
+    dispatch_once(&gInitOnce, ^{
+        gSeen = [NSMutableSet set];
+        gOffsets = @{};
+        // POSIX kill-switch check — no ObjC, safe anywhere.
+        if (access(kKillPathC, F_OK) == 0) { gKill = YES; return; }
+        LoadPrefs();
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(), NULL, ReloadNotify,
+            (__bridge CFStringRef)kReload, NULL,
+            CFNotificationSuspensionBehaviorCoalesce);
+    });
+}
+
 // ---- SAFE key derivation via KVC (no raw performSelector:) ------------------
 
 static NSString *SBMKeyForItemView(UIView *v) {
@@ -144,13 +159,12 @@ static NSString *SBMKeyForItemView(UIView *v) {
             } @catch (__unused NSException *e) {}
         }
     } @catch (__unused NSException *e) {}
-    return NSStringFromClass(v.class);   // always safe fallback
+    return NSStringFromClass(v.class);   // always-safe fallback
 }
 
 // Apply the stored offset as a TRANSLATION TRANSFORM (never touches frame).
 static void SBMApplyTransform(UIView *v) {
     @try {
-        SBMEnsureLoaded();        // lazy: safe to read prefs now (post-boot)
         CGAffineTransform t = CGAffineTransformIdentity;
         if (gEnabled) {
             NSString *key = SBMKeyForItemView(v);
@@ -173,54 +187,36 @@ static void SBMApplyTransform(UIView *v) {
     } @catch (__unused NSException *e) {}
 }
 
-// ---- hook: apply offset WITHOUT modifying frame -----------------------------
+// ---- hooks (offset applied via transform, %orig always called) -------------
 
 %hook _UIStatusBarItemView
 
 - (void)setFrame:(CGRect)frame {
-    %orig(frame);                 // unmodified -> zero layout feedback
+    %orig(frame);            // unmodified -> zero layout feedback
+    SBMEnsureLoaded();       // one-time init on first real layout (post-boot)
     if (gKill) return;
     SBMApplyTransform(self);
 }
 
 - (void)layoutSubviews {
     %orig;
+    SBMEnsureLoaded();
     if (gKill) return;
-    SBMApplyTransform(self);      // reassert if the container reset the transform
+    SBMApplyTransform(self);
 }
 
 - (void)didMoveToSuperview {
     %orig;
+    SBMEnsureLoaded();
     if (gKill) return;
-    @try {                        // one level only; keep surface tiny
-        if (self.superview) self.superview.clipsToBounds = NO;
-    } @catch (__unused NSException *e) {}
+    @try { if (self.superview) self.superview.clipsToBounds = NO; }
+    @catch (__unused NSException *e) {}
 }
 
 %end
 
-// ---- init -------------------------------------------------------------------
+// ---- init: register hooks ONLY. No Foundation here (see header comment). ----
 
 %ctor {
-    @autoreleasepool {
-        // Kill-switch: create the .disable file to neuter the tweak without
-        // uninstalling (lets you escape a crash loop from a terminal).
-        gKill = [[NSFileManager defaultManager] fileExistsAtPath:kKillFile];
-        gSeen = [NSMutableSet set];
-        gOffsets = @{};
-        if (gKill) return;        // do nothing else; hooks become no-ops
-
-        // DO NOT touch CFPreferences here. This %ctor runs inside dyld's
-        // initializer pass while SpringBoard is still bootstrapping, and
-        // CFPreferencesAppSynchronize crashes (SIGBUS) that early. Prefs are
-        // loaded lazily on the first status-bar layout (SBMEnsureLoaded), and
-        // the reload observer is registered once the main run loop is up.
-        dispatch_async(dispatch_get_main_queue(), ^{
-            SBMEnsureLoaded();
-            CFNotificationCenterAddObserver(
-                CFNotificationCenterGetDarwinNotifyCenter(), NULL, ReloadNotify,
-                (__bridge CFStringRef)kReload, NULL,
-                CFNotificationSuspensionBehaviorCoalesce);
-        });
-    }
+    %init;
 }
