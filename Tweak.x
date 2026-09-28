@@ -38,6 +38,7 @@ static NSString *const kKillFile  =
 
 static BOOL             gKill    = NO;     // hard bail-out (kill file present)
 static BOOL             gEnabled = YES;
+static BOOL             gLoaded  = NO;     // prefs loaded yet? (deferred)
 static NSDictionary    *gOffsets = nil;    // key -> @{ @"x":num, @"y":num }
 static NSMutableSet    *gSeen    = nil;    // identifiers (main thread only)
 static BOOL             gWritePending = NO;
@@ -69,9 +70,20 @@ static void LoadPrefs(void) {
             e[axis] = all[k];
         }
         gOffsets = [parsed copy];
+        gLoaded = YES;
     } @catch (__unused NSException *e) {
         gOffsets = @{};
     }
+}
+
+// Load prefs lazily, the FIRST time a status bar item lays out — i.e. well
+// after SpringBoard has finished process init. Calling CFPreferences from a
+// dylib %ctor (during dyld initializer execution) is what crashed SpringBoard
+// (SIGBUS in CFPreferencesAppSynchronize): the preferences subsystem is not
+// safe to touch that early. Deferring it fixes the boot crash loop.
+static void SBMEnsureLoaded(void) {
+    if (gLoaded) return;
+    LoadPrefs();
 }
 
 // ---- throttled, race-free discovery persistence ----------------------------
@@ -138,6 +150,7 @@ static NSString *SBMKeyForItemView(UIView *v) {
 // Apply the stored offset as a TRANSLATION TRANSFORM (never touches frame).
 static void SBMApplyTransform(UIView *v) {
     @try {
+        SBMEnsureLoaded();        // lazy: safe to read prefs now (post-boot)
         CGAffineTransform t = CGAffineTransformIdentity;
         if (gEnabled) {
             NSString *key = SBMKeyForItemView(v);
@@ -197,10 +210,17 @@ static void SBMApplyTransform(UIView *v) {
         gOffsets = @{};
         if (gKill) return;        // do nothing else; hooks become no-ops
 
-        LoadPrefs();
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(), NULL, ReloadNotify,
-            (__bridge CFStringRef)kReload, NULL,
-            CFNotificationSuspensionBehaviorCoalesce);
+        // DO NOT touch CFPreferences here. This %ctor runs inside dyld's
+        // initializer pass while SpringBoard is still bootstrapping, and
+        // CFPreferencesAppSynchronize crashes (SIGBUS) that early. Prefs are
+        // loaded lazily on the first status-bar layout (SBMEnsureLoaded), and
+        // the reload observer is registered once the main run loop is up.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            SBMEnsureLoaded();
+            CFNotificationCenterAddObserver(
+                CFNotificationCenterGetDarwinNotifyCenter(), NULL, ReloadNotify,
+                (__bridge CFStringRef)kReload, NULL,
+                CFNotificationSuspensionBehaviorCoalesce);
+        });
     }
 }
