@@ -2,6 +2,14 @@
 #import <objc/runtime.h>
 #import <notify.h>
 
+// _UIStatusBarItemView is private. Declaring it as a UIView subclass gives the
+// compiler correct typing (so `self.superview` and passing `self` where a
+// UIView* is expected are both valid), instead of the forward declaration that
+// %hook alone produces.
+@interface _UIStatusBarItemView : UIView
+- (id)item;
+@end
+
 // ============================================================================
 //  StatusBarMover  —  per-icon X/Y offset for the iOS status bar
 //  Target: iOS 15.x, rootless (XinaA15 / xina2)
@@ -55,17 +63,24 @@ static void LoadPrefs(void) {
     gOffsets = [parsed copy];
 }
 
+static void SBMRelayoutIn(UIView *v) {
+    if ([v isKindOfClass:NSClassFromString(@"_UIStatusBar")]) {
+        [v setNeedsLayout];
+        [v layoutIfNeeded];
+    }
+    for (UIView *sub in v.subviews) SBMRelayoutIn(sub);
+}
+
 static void ReloadNotify(CFNotificationCenterRef c, void *o, CFStringRef n,
                          const void *obj, CFDictionaryRef ui) {
     LoadPrefs();
-    // Force a relayout of every status bar on screen.
+    // Force a relayout of every status bar on screen (scene-based; the old
+    // UIApplication.windows API is deprecated and errors under -Werror).
     dispatch_async(dispatch_get_main_queue(), ^{
-        for (UIWindow *w in UIApplication.sharedApplication.windows) {
-            for (UIView *v in w.subviews) {
-                if ([v isKindOfClass:NSClassFromString(@"_UIStatusBar")]) {
-                    [v setNeedsLayout];
-                    [v layoutIfNeeded];
-                }
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) continue;
+            for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                SBMRelayoutIn(w);
             }
         }
     });
