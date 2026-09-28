@@ -2,34 +2,44 @@
 #import <notify.h>
 
 // ============================================================================
-//  StatusBarMover 1.0.1  —  per-icon X/Y offset for the iOS status bar
+//  StatusBarMover 1.0.2  —  per-icon offset for the iOS status bar
 //  Target: iOS 15.x, rootless (XinaA15 / xina2)
 //
-//  1.0.1 safety rework (fixes Safe Mode / SpringBoard crash-loop):
-//   * Injects into SpringBoard ONLY (see StatusBarMover.plist) instead of all
-//     of UIKit — a frame-mutating hook has no business in every app + daemon.
-//   * setFrame: is wrapped so NO exception can ever escape our code; %orig is
-//     ALWAYS called, so even a bug in our logic can't break status-bar layout.
-//   * Identifier values are type-checked (isKindOfClass:NSString) before use.
-//   * Item discovery no longer writes to disk on the layout hot path; the write
-//     is snapshotted on the main thread and flushed on a throttled background
-//     queue (no data race, no per-frame I/O).
+//  1.0.2 ROOT-CAUSE rework (Safe Mode persisted through 1.0.1 despite @try,
+//  which means the crash was NOT an ObjC exception — it was a hard crash or a
+//  watchdog hang). Two concrete causes are removed:
+//
+//   (A) LAYOUT FEEDBACK LOOP  ->  we no longer touch `frame` at all.
+//       The offset is applied with a LAYER TRANSLATION (self.transform). A
+//       transform is composited on top of layout and does NOT feed back into
+//       the frame layout pass, so SpringBoard can't get stuck relaying-out and
+//       trip the watchdog. %orig(frame) is always called UNMODIFIED.
+//
+//   (B) SIGSEGV FROM performSelector: ON PRIMITIVE-RETURNING METHODS  ->  we
+//       read the item identifier with KVC (valueForKey:). KVC boxes primitives
+//       into NSNumber (so a non-object return can't be dereferenced as a
+//       pointer) and raises a CATCHABLE NSException for unknown keys. No more
+//       raw performSelector: on private accessors.
+//
+//   Plus: a kill-switch file lets you neuter the tweak WITHOUT uninstalling
+//   (useful to escape a crash loop):
+//       /var/mobile/Library/Preferences/com.minis.statusbarmover.disable
 // ============================================================================
 
-// _UIStatusBarItemView is private. Declaring it as a UIView subclass gives the
-// compiler correct typing for self.superview and for passing self as UIView*.
 @interface _UIStatusBarItemView : UIView
-- (id)item;
 @end
 
 static NSString *const kAppID     = @"com.minis.statusbarmover";
 static NSString *const kReload    = @"com.minis.statusbarmover/reload";
 static NSString *const kItemsFile =
     @"/var/mobile/Library/Preferences/com.minis.statusbarmover.items.plist";
+static NSString *const kKillFile  =
+    @"/var/mobile/Library/Preferences/com.minis.statusbarmover.disable";
 
+static BOOL             gKill    = NO;     // hard bail-out (kill file present)
 static BOOL             gEnabled = YES;
-static NSDictionary    *gOffsets = nil;   // key -> @{ @"x": num, @"y": num }
-static NSMutableSet    *gSeen    = nil;   // identifiers observed (main thread only)
+static NSDictionary    *gOffsets = nil;    // key -> @{ @"x":num, @"y":num }
+static NSMutableSet    *gSeen    = nil;    // identifiers (main thread only)
 static BOOL             gWritePending = NO;
 
 // ---- preferences -----------------------------------------------------------
@@ -42,12 +52,10 @@ static void LoadPrefs(void) {
             CFSTR("enabled"), (__bridge CFStringRef)kAppID);
         gEnabled = (en == nil) ? YES : en.boolValue;
 
-        // Flat keys written by the Settings pane: "<identifier>.x" / ".y".
         NSDictionary *all = (__bridge_transfer NSDictionary *)
             CFPreferencesCopyMultiple(NULL, (__bridge CFStringRef)kAppID,
                                       kCFPreferencesCurrentUser,
                                       kCFPreferencesAnyHost);
-
         NSMutableDictionary *parsed = [NSMutableDictionary dictionary];
         for (NSString *k in all) {
             if (![k isKindOfClass:NSString.class]) continue;
@@ -67,8 +75,7 @@ static void LoadPrefs(void) {
 }
 
 // ---- throttled, race-free discovery persistence ----------------------------
-// Snapshot is taken on the main thread (where gSeen is mutated); the actual
-// disk write happens off-thread so status-bar layout is never blocked by I/O.
+
 static void SBMScheduleWrite(void) {
     if (gWritePending) return;
     gWritePending = YES;
@@ -106,41 +113,34 @@ static void ReloadNotify(CFNotificationCenterRef c, void *o, CFStringRef n,
     });
 }
 
-// ---- helpers ---------------------------------------------------------------
+// ---- SAFE key derivation via KVC (no raw performSelector:) ------------------
 
-// Derive a stable key for one item view. Never throws.
-static NSString *SBMKeyForItemView(UIView *itemView) {
+static NSString *SBMKeyForItemView(UIView *v) {
     @try {
-        if ([itemView respondsToSelector:@selector(item)]) {
-            id item = [itemView performSelector:@selector(item)];
-            if (item && [item respondsToSelector:@selector(displayItem)]) {
-                id di = [item performSelector:@selector(displayItem)];
-                if (di && [di respondsToSelector:@selector(identifier)]) {
-                    id ident = [di performSelector:@selector(identifier)];
-                    if ([ident isKindOfClass:NSString.class] && [ident length])
-                        return ident;
-                }
-            }
-            if (item && [item respondsToSelector:@selector(indicatorName)]) {
-                id nm = [item performSelector:@selector(indicatorName)];
+        id item = [v valueForKey:@"item"];
+        if (item) {
+            @try {
+                id di = [item valueForKey:@"displayItem"];
+                id ident = di ? [di valueForKey:@"identifier"] : nil;
+                if ([ident isKindOfClass:NSString.class] && [ident length])
+                    return ident;
+            } @catch (__unused NSException *e) {}
+            @try {
+                id nm = [item valueForKey:@"indicatorName"];
                 if ([nm isKindOfClass:NSString.class] && [nm length])
                     return nm;
-            }
+            } @catch (__unused NSException *e) {}
         }
     } @catch (__unused NSException *e) {}
-    // Fallback: class name (e.g. "_UIStatusBarDataBatteryView").
-    return NSStringFromClass(itemView.class);
+    return NSStringFromClass(v.class);   // always safe fallback
 }
 
-// ---- the actual hook -------------------------------------------------------
-
-%hook _UIStatusBarItemView
-
-- (void)setFrame:(CGRect)frame {
-    // Guarantee: whatever happens in here, %orig runs with a sane frame.
+// Apply the stored offset as a TRANSLATION TRANSFORM (never touches frame).
+static void SBMApplyTransform(UIView *v) {
     @try {
+        CGAffineTransform t = CGAffineTransformIdentity;
         if (gEnabled) {
-            NSString *key = SBMKeyForItemView(self);
+            NSString *key = SBMKeyForItemView(v);
             if (key.length) {
                 if (![gSeen containsObject:key]) {
                     [gSeen addObject:key];
@@ -148,36 +148,55 @@ static NSString *SBMKeyForItemView(UIView *itemView) {
                 }
                 NSDictionary *off = gOffsets[key];
                 if (off) {
-                    frame.origin.x += [off[@"x"] doubleValue];
-                    frame.origin.y += [off[@"y"] doubleValue];
+                    CGFloat dx = [off[@"x"] doubleValue];
+                    CGFloat dy = [off[@"y"] doubleValue];
+                    if (dx != 0.0 || dy != 0.0)
+                        t = CGAffineTransformMakeTranslation(dx, dy);
                 }
             }
         }
+        if (!CGAffineTransformEqualToTransform(v.transform, t))
+            v.transform = t;
     } @catch (__unused NSException *e) {}
-    %orig(frame);
 }
 
-// Let icons move slightly outside the tight bar bounds without being clipped.
+// ---- hook: apply offset WITHOUT modifying frame -----------------------------
+
+%hook _UIStatusBarItemView
+
+- (void)setFrame:(CGRect)frame {
+    %orig(frame);                 // unmodified -> zero layout feedback
+    if (gKill) return;
+    SBMApplyTransform(self);
+}
+
+- (void)layoutSubviews {
+    %orig;
+    if (gKill) return;
+    SBMApplyTransform(self);      // reassert if the container reset the transform
+}
+
 - (void)didMoveToSuperview {
     %orig;
-    @try {
-        UIView *v = self.superview;
-        int guard = 0;
-        while (v && guard++ < 3) {
-            v.clipsToBounds = NO;
-            v = v.superview;
-        }
+    if (gKill) return;
+    @try {                        // one level only; keep surface tiny
+        if (self.superview) self.superview.clipsToBounds = NO;
     } @catch (__unused NSException *e) {}
 }
 
 %end
 
-// ---- init ------------------------------------------------------------------
+// ---- init -------------------------------------------------------------------
 
 %ctor {
     @autoreleasepool {
+        // Kill-switch: create the .disable file to neuter the tweak without
+        // uninstalling (lets you escape a crash loop from a terminal).
+        gKill = [[NSFileManager defaultManager] fileExistsAtPath:kKillFile];
         gSeen = [NSMutableSet set];
         gOffsets = @{};
+        if (gKill) return;        // do nothing else; hooks become no-ops
+
         LoadPrefs();
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(), NULL, ReloadNotify,
