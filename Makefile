@@ -8,7 +8,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = StatusBarMover
 
 StatusBarMover_FILES = Tweak.x
-StatusBarMover_CFLAGS = -fobjc-arc
+StatusBarMover_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 StatusBarMover_FRAMEWORKS = UIKit
 
 include $(THEOS_MAKE_PATH)/tweak.mk
