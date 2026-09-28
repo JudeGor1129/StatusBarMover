@@ -10,7 +10,7 @@ StatusBarMoverPrefs_FILES = SBMRootListController.m
 StatusBarMoverPrefs_INSTALL_PATH = /Library/PreferenceBundles
 StatusBarMoverPrefs_FRAMEWORKS = UIKit
 StatusBarMoverPrefs_PRIVATE_FRAMEWORKS = Preferences
-StatusBarMoverPrefs_CFLAGS = -fobjc-arc
+StatusBarMoverPrefs_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 
 include $(THEOS_MAKE_PATH)/bundle.mk
 
