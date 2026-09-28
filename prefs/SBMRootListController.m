@@ -87,15 +87,17 @@ static NSString *SBMPretty(NSString *ident) {
                     ([axis isEqualToString:@"x"] ? @"X offset" : @"Y offset")
                 target:self set:@selector(setPreferenceValue:specifier:)
                 get:@selector(readPreferenceValue:) detail:Nil
-                cell:PSStepperCell edit:Nil];
+                cell:PSEditTextCell edit:Nil];
             [st setProperty:kAppID forKey:@"defaults"];
             [st setProperty:[NSString stringWithFormat:@"%@.%@", ident, axis]
                      forKey:@"key"];
-            [st setProperty:@0        forKey:@"default"];
-            [st setProperty:@(-200)   forKey:@"min"];
-            [st setProperty:@(200)    forKey:@"max"];
-            [st setProperty:@1        forKey:@"increment"];
-            [st setProperty:@YES      forKey:@"showValue"];
+            [st setProperty:@"0" forKey:@"default"];
+            [st setProperty:@"0" forKey:@"placeholder"];
+            // numbers + punctuation keyboard includes the minus sign
+            [st setProperty:@(UIKeyboardTypeNumbersAndPunctuation)
+                     forKey:@"keyboardType"];
+            [st setProperty:@NO forKey:@"autoCapsType"];
+            [st setProperty:@NO forKey:@"autoCorrectionType"];
             [s addObject:st];
         }
     }
