@@ -1,4 +1,7 @@
-export ARCHS = arm64 arm64e
+# 只出 arm64 单切片：XinaA15 环境对 arm64e 切片的 LC_DYLD_CHAINED_FIXUPS 处理有问题，
+# 会导致 bundle 镜像在 libobjc readClass 阶段 SIGBUS（设置页闪退）。
+# arm64 切片使用经典重定位，兼容性最好。
+export ARCHS = arm64
 export TARGET = iphone:clang:latest:15.0
 # XinaA15 (xina2) 是无根(rootless)越狱 → 必须以 rootless 方式打包，
 # 安装路径会自动落到 /var/jb/... 之下。
