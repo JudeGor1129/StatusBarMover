@@ -21,6 +21,8 @@ typedef NS_ENUM(NSInteger, SBMIconKind) {
 @property (nonatomic, copy)   NSString   *key;      // 偏好键前缀（标识符）
 @property (nonatomic, copy)   NSString   *text;     // 时间 / 5G / 80%
 @property (nonatomic, assign) CGSize      idealSize;
+- (instancetype)initWithKind:(SBMIconKind)kind key:(NSString *)key text:(NSString *)text;
+- (CGSize)sizeForKind;
 @end
 
 @implementation SBMPreviewIcon

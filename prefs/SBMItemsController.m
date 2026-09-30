@@ -4,25 +4,25 @@
 //  列出插件在本机实测发现的所有状态栏图标，每个都可以单独设定 X / Y 偏移。
 //  主页面负责常用的六个；这一页保证任何图标都不会「够不着」。
 //
+//  与主设置页相同的稳定性做法：不直接读写父类 _specifiers 实例变量，
+//  滑块用 min / max / showValue，整表构建包 @try。
+//
 
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
+#import <objc/runtime.h>
 #import "SBMCommon.h"
 
 @interface SBMItemsController : PSListController
 @end
+
+static const void *kSBMSpecsKey = &kSBMSpecsKey;
 
 @implementation SBMItemsController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"全部图标";
-}
-
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    _specifiers = nil;
-    [self reloadSpecifiers];
 }
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
@@ -43,7 +43,11 @@
     return @0;
 }
 
-- (PSSpecifier *)sbm_sliderNamed:(NSString *)name key:(NSString *)fullKey axis:(NSString *)axis group:(NSString *)groupKey {
+- (PSSpecifier *)sbm_sliderNamed:(NSString *)name
+                             key:(NSString *)fullKey
+                            axis:(NSString *)axis
+                           group:(NSString *)groupKey {
+    BOOL isX = [axis isEqualToString:@"x"];
     PSSpecifier *sp = [PSSpecifier preferenceSpecifierNamed:name
                                                      target:self
                                                         set:@selector(setPreferenceValue:specifier:)
@@ -54,24 +58,23 @@
     [sp setProperty:SBMAppID forKey:@"defaults"];
     [sp setProperty:fullKey forKey:@"key"];
     [sp setProperty:@0 forKey:@"default"];
-    [sp setProperty:@([axis isEqualToString:@"x"] ? -60 : -25) forKey:@"minValue"];
-    [sp setProperty:@([axis isEqualToString:@"x"] ?  60 :  25) forKey:@"maxValue"];
+    [sp setProperty:@(isX ? -60 : -25) forKey:@"min"];
+    [sp setProperty:@(isX ?  60 :  25) forKey:@"max"];
+    [sp setProperty:@YES forKey:@"showValue"];
     [sp setProperty:@YES forKey:@"isContinuous"];
-    [sp setProperty:groupKey forKey:@"sbmKey"];
+    [sp setProperty:groupKey forKey:@"sbmGroup"];
     return sp;
 }
 
-- (NSMutableArray *)specifiers {
-    if (_specifiers) return _specifiers;
-
+- (NSMutableArray *)sbm_buildSpecifiers {
     NSMutableArray *s = [NSMutableArray array];
     NSArray *items = SBMDiscoveredItems();
 
     PSSpecifier *g0 = [PSSpecifier emptyGroupSpecifier];
-    [g0 setProperty:items.count
-        ? [NSString stringWithFormat:@"插件在本机共发现 %lu 个状态栏图标。带 cat=signal/data/wifi/battery 的条目就是主页面那六项。",
+    [g0 setProperty:(items.count
+        ? [NSString stringWithFormat:@"插件在本机共发现 %lu 个状态栏图标。标着 signal / data / wifi / battery 的就是主页面那几项。",
            (unsigned long)items.count]
-        : @"还没有发现任何图标。请开启/关闭一次 Wi-Fi、飞行模式，或重启 SpringBoard 后再回到本页。"
+        : @"还没有发现任何图标。请开关一次 Wi-Fi 或飞行模式，重启 SpringBoard 后再回到本页。")
              forKey:@"footerText"];
     [s addObject:g0];
 
@@ -93,8 +96,9 @@
 
         PSSpecifier *grp = [PSSpecifier emptyGroupSpecifier];
         [grp setProperty:SBMNiceName(key, cls) forKey:@"label"];
-        [grp setProperty:[NSString stringWithFormat:@"标识符 %@　·　分类 %@　·　%@",
-                          key, SBMCategoryTitle(cat), cls.length ? cls : @"—"]
+        [grp setProperty:[NSString stringWithFormat:@"标识符 %@　·　分类 %@　·　%@　·　当前 X %+.0f / Y %+.0f",
+                          key, SBMCategoryTitle(cat), cls.length ? cls : @"—",
+                          SBMOffset(key, @"x"), SBMOffset(key, @"y")]
                  forKey:@"footerText"];
         [s addObject:grp];
 
@@ -106,17 +110,6 @@
                                        key:[NSString stringWithFormat:@"%@.y", key]
                                       axis:@"y"
                                      group:key]];
-
-        PSSpecifier *sum = [PSSpecifier preferenceSpecifierNamed:@"当前数值"
-                                                          target:self
-                                                             set:nil
-                                                             get:@selector(sbm_summary:)
-                                                          detail:nil
-                                                            cell:PSTitleValueCell
-                                                            edit:nil];
-        [sum setProperty:key forKey:@"sbmKey"];
-        [sum setProperty:@YES forKey:@"sbmSummary"];
-        [s addObject:sum];
     }
 
     PSSpecifier *reset = [PSSpecifier preferenceSpecifierNamed:@"重置全部偏移"
@@ -130,31 +123,42 @@
     [reset setButtonAction:@selector(sbm_resetAll)];
     [s addObject:reset];
 
-    _specifiers = s;
-    return _specifiers;
+    return s;
 }
 
-- (id)sbm_summary:(PSSpecifier *)specifier {
-    NSString *key = [specifier propertyForKey:@"sbmKey"];
-    if (!key.length) return @"";
-    return [NSString stringWithFormat:@"水平 %+.0f pt　·　垂直 %+.0f pt",
-            SBMOffset(key, @"x"), SBMOffset(key, @"y")];
+- (NSMutableArray *)specifiers {
+    NSMutableArray *mine = objc_getAssociatedObject(self, kSBMSpecsKey);
+    if ([mine isKindOfClass:NSMutableArray.class] && mine.count) return mine;
+
+    NSMutableArray *s = nil;
+    @try { s = [self sbm_buildSpecifiers]; } @catch (__unused NSException *e) { s = nil; }
+    if (!s) s = [NSMutableArray array];
+
+    objc_setAssociatedObject(self, kSBMSpecsKey, s, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    @try { [self setValue:s forKey:@"specifiers"]; } @catch (__unused NSException *e) {}
+    return s;
 }
 
 - (void)sbm_copyDiagnostics {
-    NSString *text = SBMDiagnostics(SBMDiscoveredItems());
-    [UIPasteboard generalPasteboard].string = text;
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"已复制"
-                                                              message:@"标识符清单已复制到剪贴板，可直接发给开发者为你的机型做精确适配。"
-                                                       preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:a animated:YES completion:nil];
+    @try {
+        NSString *text = SBMDiagnostics(SBMDiscoveredItems());
+        [UIPasteboard generalPasteboard].string = text;
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"已复制"
+                                                                  message:@"标识符清单已复制到剪贴板，可直接发给开发者为你的机型做精确适配。"
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:a animated:YES completion:nil];
+    } @catch (__unused NSException *e) {}
 }
 
 - (void)sbm_resetAll {
     SBMClearAllOffsets(SBMDiscoveredItems());
-    _specifiers = nil;
-    [self reloadSpecifiers];
+    NSMutableArray *fresh = nil;
+    @try { fresh = [self sbm_buildSpecifiers]; } @catch (__unused NSException *e) {}
+    if (!fresh) fresh = [NSMutableArray array];
+    objc_setAssociatedObject(self, kSBMSpecsKey, fresh, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    @try { [self setValue:fresh forKey:@"specifiers"]; } @catch (__unused NSException *e) {}
+    @try { [self reloadSpecifiers]; } @catch (__unused NSException *e) {}
 }
 
 @end
