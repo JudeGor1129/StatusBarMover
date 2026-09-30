@@ -6,11 +6,12 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = StatusBarMoverPrefs
 
-StatusBarMoverPrefs_FILES = SBMRootListController.m
+StatusBarMoverPrefs_FILES = SBMRootListController.m SBMItemsController.m SBMPreviewView.m
 StatusBarMoverPrefs_INSTALL_PATH = /Library/PreferenceBundles
 StatusBarMoverPrefs_FRAMEWORKS = UIKit
 StatusBarMoverPrefs_PRIVATE_FRAMEWORKS = Preferences
 StatusBarMoverPrefs_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+StatusBarMoverPrefs_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/bundle.mk
 

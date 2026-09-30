@@ -1,6 +1,8 @@
 export ARCHS = arm64 arm64e
 export TARGET = iphone:clang:latest:15.0
-# XinaA15 (xina2) is a ROOTLESS jailbreak -> package must be rootless.
+# XinaA15 (xina2) 是无根(rootless)越狱 → 必须以 rootless 方式打包，
+# 安装路径会自动落到 /var/jb/... 之下。
+# 如果你的环境其实是有根越狱，把下面这行注释掉即可。
 export THEOS_PACKAGE_SCHEME = rootless
 
 include $(THEOS)/makefiles/common.mk

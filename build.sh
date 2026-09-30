@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# Convenience build script for StatusBarMover.
-# Run on a machine that has Theos installed (macOS or Linux/WSL + iOS SDK).
+# StatusBarMover 一键打包脚本（在装了 Theos 的机器上运行：macOS / Linux / WSL）
 set -e
 
 if [ -z "$THEOS" ]; then
-  echo "ERROR: \$THEOS is not set. Install Theos first: https://theos.dev/docs/installation"
+  echo "ERROR: 未设置 \$THEOS，请先安装 Theos：https://theos.dev/docs/installation"
   exit 1
 fi
 
 cd "$(dirname "$0")"
 
-echo ">> Cleaning…"
+echo ">> 清理…"
 make clean || true
 
-echo ">> Building rootless package…"
+echo ">> 以 rootless 方式打包（XinaA15 / xina2 必须）…"
 make package FINALPACKAGE=1
 
 echo
-echo ">> Done. Package(s):"
+echo ">> 完成，产物："
 ls -1 packages/*.deb
 echo
-echo "Install with Sileo/Zebra on your XinaA15 device, or push directly with:"
-echo "  make do THEOS_DEVICE_IP=<phone-ip> THEOS_DEVICE_PORT=22"
+echo "安装方式："
+echo "  1) 把 packages/*.deb 传到手机，用 Sileo / Filza 安装"
+echo "  2) 或直接：make do THEOS_DEVICE_IP=<手机IP> THEOS_DEVICE_PORT=22"

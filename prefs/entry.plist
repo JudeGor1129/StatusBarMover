@@ -3,8 +3,7 @@
         bundle = "StatusBarMoverPrefs";
         cell = "PSLinkCell";
         detail = "SBMRootListController";
-        icon = "icon.png";
         isController = 1;
-        label = "StatusBarMover";
+        label = "状态栏图标位置";
     };
 }
