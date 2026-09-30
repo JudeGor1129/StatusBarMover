@@ -1,6 +1,6 @@
 # 与主工程一致：系统 app 进程只接受 arm64e，但必须避开 chained fixups
 export ARCHS = arm64 arm64e
-export TARGET = iphone:clang:latest:12.0
+export TARGET = iphone:clang:latest:13.0
 export THEOS_PACKAGE_SCHEME = rootless
 
 include $(THEOS)/makefiles/common.mk
@@ -11,7 +11,7 @@ StatusBarMoverPrefs_FILES = SBMRootListController.m SBMItemsController.m SBMPrev
 StatusBarMoverPrefs_INSTALL_PATH = /Library/PreferenceBundles
 StatusBarMoverPrefs_FRAMEWORKS = UIKit
 StatusBarMoverPrefs_PRIVATE_FRAMEWORKS = Preferences
-StatusBarMoverPrefs_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+StatusBarMoverPrefs_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unguarded-availability-new
 StatusBarMoverPrefs_LDFLAGS = -Wl,-no_fixup_chains -Wl,-undefined,dynamic_lookup
 # 让 Theos 使用我们自己提供的 Info.plist（里面含 NSPrincipalClass，
 # 这是 Preferences 加载 bundle 时必需的）
