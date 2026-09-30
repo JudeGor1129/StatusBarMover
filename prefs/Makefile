@@ -1,6 +1,3 @@
-# 只出 arm64 单切片：XinaA15 环境对 arm64e 切片的 LC_DYLD_CHAINED_FIXUPS 处理有问题，
-# 会导致 bundle 镜像在 libobjc readClass 阶段 SIGBUS（设置页闪退）。
-# arm64 切片使用经典重定位，兼容性最好。
 export ARCHS = arm64
 export TARGET = iphone:clang:latest:15.0
 export THEOS_PACKAGE_SCHEME = rootless
@@ -15,9 +12,17 @@ StatusBarMoverPrefs_FRAMEWORKS = UIKit
 StatusBarMoverPrefs_PRIVATE_FRAMEWORKS = Preferences
 StatusBarMoverPrefs_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 StatusBarMoverPrefs_LDFLAGS = -Wl,-undefined,dynamic_lookup
+# 让 Theos 使用我们自己提供的 Info.plist（里面含 NSPrincipalClass，
+# 这是 Preferences 加载 bundle 时必需的）
+StatusBarMoverPrefs_INFO_PLIST = Info.plist
 
 include $(THEOS_MAKE_PATH)/bundle.mk
 
+# ★ 关键修复：确认 Info.plist 一定被装进 .bundle 里。
+#   之前打出来的包里 bundle 目录只有一个可执行文件，没有 Info.plist，
+#   于是 Preferences 打开设置页只会显示「未能载入软件包…已损坏或丢失必要的资源」。
 internal-stage::
 	$(ECHO_NOTHING)mkdir -p $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences$(ECHO_END)
 	$(ECHO_NOTHING)cp entry.plist $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences/StatusBarMover.plist$(ECHO_END)
+	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/PreferenceBundles/$(BUNDLE_NAME).bundle"$(ECHO_END)
+	$(ECHO_NOTHING)cp Info.plist "$(THEOS_STAGING_DIR)/Library/PreferenceBundles/$(BUNDLE_NAME).bundle/Info.plist"$(ECHO_END)

@@ -1,6 +1,6 @@
 Package: com.minis.statusbarmover
 Name: StatusBarMover
-Version: 2.0.2
+Version: 2.0.3
 Architecture: iphoneos-arm64
 Description: 自由调节状态栏图标位置 — 信号 / 数据网络 / Wi-Fi / 电池 / 电量百分比 / 时钟，每一项都可以独立设置水平与垂直偏移。内置可拖动的实时预览，拖一下就调好了。偏移以非破坏性的 transform 施加，绝不触碰系统布局(frame)，零 watchdog 风险。带 POSIX 紧急开关，装坏了也能一键救回。iOS 15.x rootless (XinaA15 / xina2)。
 Depends: mobilesubstrate, preferenceloader
