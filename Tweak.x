@@ -1,36 +1,41 @@
 #import <UIKit/UIKit.h>
 #import <notify.h>
 #import <unistd.h>
+#import <sys/stat.h>
 
 // ============================================================================
-//  StatusBarMover 2.0.0 — iOS 15 状态栏图标自由定位
+//  StatusBarMover 2.0.6 — iOS 15 状态栏图标自由定位
 //  目标环境: iPhone 13 Pro Max / iOS 15.4.1 / XinaA15(xina2) / rootless
 //
 //  ── 工作原理 ──────────────────────────────────────────────────────────────
-//  状态栏的每一个图标都是一个 `_UIStatusBarItemView` 子类实例。我们在它每次
+//  状态栏的每一个图标都是一个 `_UIStatusBarItemView` 子类实例。在它每次
 //  setFrame: / layoutSubviews 之后，给这个视图叠加一个「平移变换」(transform)
 //  来实现位移。
 //
 //  ★ 为什么用 transform 而不是直接改 frame：
-//    frame 由系统的布局引擎掌管，直接改会被下一次布局覆盖，而且会与布局引擎
-//    互相反馈（极易触发 SpringBoard watchdog / 安全模式）。transform 是渲染层
-//    叠加，不参与约束解算，因此完全无副作用。
+//    frame 由系统布局引擎掌管，直接改会被下一次布局覆盖，并且会与布局引擎
+//    互相反馈（极易触发 SpringBoard watchdog）。transform 属于渲染层叠加，
+//    不参与约束解算，零副作用。
 //
-//  ── 稳定性设计（血泪经验，改动前务必读完）────────────────────────────────
-//  1.0.0–1.0.3 全部在 %ctor 里崩溃（EXC_BAD_ACCESS / SIGBUS），原因是 dyld 还在
-//  跑 image initializer 的阶段（jbinjector → 本 dylib 构造函数）就调用了
-//  Foundation/CoreFoundation，此时 ObjC 常量字符串类引用尚未绑定。
-//  那些崩溃是硬件信号，@try 根本抓不住。
+//  ── 偏好键约定（2.0.6 起）────────────────────────────────────────────────
+//    固定分类键（设置页用这些，与内部标识符无关，永远对得上）：
+//        signal.x / signal.y        信号
+//        data.x   / data.y          数据网络类型 (5G/4G)
+//        wifi.x   / wifi.y          Wi-Fi
+//        battery.x/ battery.y       电池
+//        percent.x/ percent.y       电量百分比
+//        time.x   / time.y          时间
+//    也支持用「具体标识符」做更精细的覆盖，例如 wifi.x / cellularBars.x，
+//    命中时优先于分类键。
 //
-//  因此 1.0.4 起的铁律，2.0.0 继续遵守：
-//    · %ctor 里只做 `%init;`（注册 hook），绝不碰 Foundation/CF。
-//    · 所有初始化（开关、读偏好、注册重启通知）用 dispatch_once 延迟到
-//      「第一次状态栏布局」时执行 —— 那时 SpringBoard 早就启动完毕。
-//    · 紧急开关用 POSIX access() 检查纯 C 字符串路径，连常量 NSString 都不需要。
+//  ── 稳定性铁律（改动前务必读完）──────────────────────────────────────────
+//  1.0.0–1.0.3 全部在 %ctor 里崩溃（EXC_BAD_ACCESS / SIGBUS）：dyld 还在跑
+//  image initializer 的阶段就调用了 Foundation/CoreFoundation，此时 ObjC 常量
+//  字符串的类引用尚未绑定。那是硬件信号，@try 抓不住。
+//  因此：%ctor 里只允许 `%init;`，其余初始化一律 dispatch_once 延迟到首次布局。
 //
-//  紧急开关（装坏了进安全模式也能救回来）：
+//  紧急开关（装坏了进安全模式也能救）：
 //      touch /var/mobile/Library/Preferences/com.minis.statusbarmover.disable
-//      然后重启 SpringBoard；删除该文件即恢复。
 // ============================================================================
 
 @interface _UIStatusBarItemView : UIView
@@ -39,13 +44,14 @@
 static NSString *const kAppID     = @"com.minis.statusbarmover";
 static NSString *const kReload    = @"com.minis.statusbarmover/reload";
 static NSString *const kItemsFile = @"/var/mobile/Library/Preferences/com.minis.statusbarmover.items.plist";
+static const char     *kPrefsPathC = "/var/mobile/Library/Preferences/com.minis.statusbarmover.plist";
 // 故意用 C 字符串：安全检查不依赖任何 ObjC 常量字符串。
-static const char *kKillPathC = "/var/mobile/Library/Preferences/com.minis.statusbarmover.disable";
+static const char     *kKillPathC  = "/var/mobile/Library/Preferences/com.minis.statusbarmover.disable";
 
 static BOOL                 gKill    = NO;
 static BOOL                 gEnabled = YES;
-static NSDictionary        *gOffsets = nil;   // { identifier: { x: NSNumber, y: NSNumber } }
-static NSMutableDictionary *gSeen    = nil;   // { identifier: className }  —— 用于设置页自动生成列表
+static NSDictionary        *gOffsets = nil;   // { 键: { x: NSNumber, y: NSNumber } }
+static NSMutableDictionary *gSeen    = nil;   // { 标识符: 类名 } —— 供诊断
 static BOOL                 gWritePending = NO;
 static dispatch_once_t      gInitOnce;
 
@@ -53,16 +59,15 @@ static dispatch_once_t      gInitOnce;
 
 static void LoadPrefs(void) {
     @try {
-        CFPreferencesAppSynchronize((__bridge CFStringRef)kAppID);
+        // 直接读 plist 文件：绕过 CFPreferences 的进程内缓存，
+        // 这样设置页（另一个进程）写入后能立刻被 SpringBoard 看到。
+        NSDictionary *all = [NSDictionary dictionaryWithContentsOfFile:
+                             @"/var/mobile/Library/Preferences/com.minis.statusbarmover.plist"];
+        if (![all isKindOfClass:NSDictionary.class]) all = @{};
 
-        NSNumber *en = (__bridge_transfer NSNumber *)CFPreferencesCopyAppValue(
-            CFSTR("enabled"), (__bridge CFStringRef)kAppID);
-        gEnabled = (en == nil) ? YES : en.boolValue;
+        id en = all[@"enabled"];
+        gEnabled = en ? ([en respondsToSelector:@selector(boolValue)] ? [en boolValue] : YES) : YES;
 
-        NSDictionary *all = (__bridge_transfer NSDictionary *)
-            CFPreferencesCopyMultiple(NULL, (__bridge CFStringRef)kAppID,
-                                      kCFPreferencesCurrentUser,
-                                      kCFPreferencesAnyHost);
         NSMutableDictionary *parsed = [NSMutableDictionary dictionary];
         for (NSString *k in all) {
             if (![k isKindOfClass:NSString.class]) continue;
@@ -70,9 +75,9 @@ static void LoadPrefs(void) {
             if (dot.location == NSNotFound) continue;
             NSString *axis = [k substringFromIndex:dot.location + 1];
             if (![axis isEqualToString:@"x"] && ![axis isEqualToString:@"y"]) continue;
-            NSString *ident = [k substringToIndex:dot.location];
-            NSMutableDictionary *e = parsed[ident];
-            if (!e) { e = [NSMutableDictionary dictionary]; parsed[ident] = e; }
+            NSString *group = [k substringToIndex:dot.location];
+            NSMutableDictionary *e = parsed[group];
+            if (!e) { e = [NSMutableDictionary dictionary]; parsed[group] = e; }
             e[axis] = all[k];
         }
         gOffsets = [parsed copy];
@@ -81,17 +86,31 @@ static void LoadPrefs(void) {
     }
 }
 
-// ---- 图标分类：让设置页知道哪个标识符是「信号 / 数据 / Wi-Fi / 电池」-------
+// 设置页是纯 plist 页面（由 Preferences 自己渲染），不会发我们的 Darwin 通知，
+// 所以这里按 mtime 轮询一次偏好文件（节流到 0.75s，代价一次 stat）。
+static void SBMRefreshIfStale(void) {
+    static CFAbsoluteTime sLastCheck = 0;
+    static CFAbsoluteTime sLastMTime = -1;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - sLastCheck < 0.75) return;
+    sLastCheck = now;
+    struct stat st;
+    if (stat(kPrefsPathC, &st) != 0) return;
+    CFAbsoluteTime m = (CFAbsoluteTime)st.st_mtimespec.tv_sec
+                     + (CFAbsoluteTime)st.st_mtimespec.tv_nsec / 1000000000.0;
+    if (m != sLastMTime) { sLastMTime = m; LoadPrefs(); }
+}
+
+// ---- 图标分类：让固定分类键生效 --------------------------------------------
 //
 //  iOS 15 的标识符在不同机型/版本上略有差异，这里用「精确名 → 关键字 →
-//  视图类名」三级匹配。设置页只是把结果分组展示，即便分类猜错也不会丢功能：
-//  「全部图标」页里可以调节任何一个被发现的标识符。
+//  视图类名」三级匹配，把每个图标归到固定的分类上。
 
 static NSString *SBMCategoryFor(NSString *ident, NSString *cls) {
     NSString *k = ident.lowercaseString ?: @"";
     NSString *c = cls.lowercaseString   ?: @"";
 
-    // 精确名优先（这些是 iOS 15 实测发现的标识符）
+    // 实测标识符精确匹配
     if ([k isEqualToString:@"batterydetail"])  return @"percent";
     if ([k isEqualToString:@"batterypercent"]) return @"percent";
     if ([k isEqualToString:@"battery"])        return @"battery";
@@ -103,19 +122,19 @@ static NSString *SBMCategoryFor(NSString *ident, NSString *cls) {
 
     // 关键字 / 类名
     if ([k containsString:@"percent"] || [k containsString:@"detail"] ||
-        [c containsString:@"percent"])                       return @"percent";
-    if ([k containsString:@"battery"] || [c containsString:@"battery"]) return @"battery";
+        [c containsString:@"percent"])                                   return @"percent";
+    if ([k containsString:@"battery"] || [c containsString:@"battery"])   return @"battery";
     if ([k containsString:@"wifi"] || [k containsString:@"wi-fi"] ||
-        [c containsString:@"wifi"])                          return @"wifi";
+        [c containsString:@"wifi"])                                       return @"wifi";
     if ([k containsString:@"datanetwork"] || [c containsString:@"datanetwork"] ||
         [k containsString:@"networktype"] || [c containsString:@"networktype"]) return @"data";
     if ([k containsString:@"bars"] || [c containsString:@"signal"] ||
-        [k containsString:@"signal"])                        return @"signal";
-    if ([k containsString:@"time"] || [c containsString:@"time"]) return @"time";
+        [k containsString:@"signal"])                                     return @"signal";
+    if ([k containsString:@"time"] || [c containsString:@"time"])         return @"time";
     return @"other";
 }
 
-// ---- 节流 + 无竞争的发现结果落盘 -------------------------------------------
+// ---- 节流 + 无竞争的诊断落盘 -----------------------------------------------
 
 static void SBMScheduleWrite(void) {
     if (gWritePending) return;
@@ -123,12 +142,10 @@ static void SBMScheduleWrite(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         gWritePending = NO;
-        // 写成 [{ key, cls, cat }...]，设置页据此自动生成条目
         NSMutableArray *rows = [NSMutableArray array];
         for (NSString *key in [[gSeen allKeys] sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)]) {
             NSString *cls = gSeen[key] ?: @"";
-            [rows addObject:@{ @"key": key,
-                               @"cls": cls,
+            [rows addObject:@{ @"key": key, @"cls": cls,
                                @"cat": SBMCategoryFor(key, cls) }];
         }
         NSArray *snap = [rows copy];
@@ -139,7 +156,7 @@ static void SBMScheduleWrite(void) {
     });
 }
 
-// ---- 全窗口强制重新布局（设置页改动后立即生效）-----------------------------
+// ---- 全窗口强制重新布局 -----------------------------------------------------
 
 static void SBMRelayoutIn(UIView *v) {
     if ([v isKindOfClass:NSClassFromString(@"_UIStatusBar")]) {
@@ -163,7 +180,7 @@ static void ReloadNotify(CFNotificationCenterRef c, void *o, CFStringRef n,
     });
 }
 
-// ---- 延迟初始化：第一次状态栏布局时执行（此时早已开机完成）-----------------
+// ---- 延迟初始化：第一次状态栏布局时执行 ------------------------------------
 
 static void SBMEnsureLoaded(void) {
     dispatch_once(&gInitOnce, ^{
@@ -200,9 +217,19 @@ static NSString *SBMKeyForItemView(UIView *v) {
     return NSStringFromClass(v.class);   // 兜底：一定安全
 }
 
+// 取偏移：优先「具体标识符」，否则退回「固定分类键」
+static NSDictionary *SBMOffsetFor(NSString *ident, NSString *cls) {
+    NSDictionary *off = gOffsets[ident];
+    if (off) return off;
+    NSString *cat = SBMCategoryFor(ident, cls);
+    if (cat.length && ![cat isEqualToString:@"other"]) return gOffsets[cat];
+    return nil;
+}
+
 // 以「平移变换」施加偏移，永不触碰 frame。
 static void SBMApplyTransform(UIView *v) {
     @try {
+        SBMRefreshIfStale();
         CGAffineTransform t = CGAffineTransformIdentity;
         if (gEnabled) {
             NSString *key = SBMKeyForItemView(v);
@@ -211,7 +238,7 @@ static void SBMApplyTransform(UIView *v) {
                     gSeen[key] = NSStringFromClass(v.class) ?: @"";
                     SBMScheduleWrite();
                 }
-                NSDictionary *off = gOffsets[key];
+                NSDictionary *off = SBMOffsetFor(key, NSStringFromClass(v.class));
                 if (off) {
                     CGFloat dx = [off[@"x"] doubleValue];
                     CGFloat dy = [off[@"y"] doubleValue];

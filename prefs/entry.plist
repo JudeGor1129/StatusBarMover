@@ -1,9 +1,0 @@
-{
-    entry = {
-        bundle = "StatusBarMoverPrefs";
-        cell = "PSLinkCell";
-        detail = "SBMRootListController";
-        isController = 1;
-        label = "状态栏图标位置";
-    };
-}
