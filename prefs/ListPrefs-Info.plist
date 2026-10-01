@@ -2,16 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 纯资源 bundle：没有任何可执行文件，
+	     Preferences 加载它时不需要 dlopen 任何自定义二进制。 -->
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
-	<key>CFBundleExecutable</key>
-	<string>StatusBarMoverPrefs</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.minis.statusbarmover.prefs</string>
+	<string>com.minis.statusbarmover.listprefs</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>StatusBarMoverPrefs</string>
+	<string>StatusBarMoverListPrefs</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
@@ -20,7 +20,5 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>2.0.7</string>
-	<key>NSPrincipalClass</key>
-	<string>SBMRootListController</string>
 </dict>
 </plist>

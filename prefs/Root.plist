@@ -1,0 +1,197 @@
+{
+    title = "状态栏图标位置";
+    items = (
+        {
+            cell = PSGroupCell;
+            footerText = "滑块改动立即生效，无需重启。偏好域 com.minis.statusbarmover。";
+        },
+        {
+            cell = PSSwitchCell;
+            label = "启用 StatusBarMover";
+            defaults = "com.minis.statusbarmover";
+            key = "enabled";
+            "default" = 1;
+        },
+        {
+            cell = PSLinkCell;
+            label = "图形化调节（拖动预览）";
+            bundle = "StatusBarMoverPrefs";
+            detail = "SBMRootListController";
+            isController = 1;
+        },
+
+        {
+            cell = PSGroupCell;
+            label = "1. 信号";
+            footerText = "标识符 cellularBars　·　键 signal.x / signal.y";
+        },
+        {
+            cell = PSSliderCell;
+            label = "水平偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "signal.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "垂直偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "signal.y";
+            "default" = 0;
+            min = -25; max = 25; showValue = 1; isContinuous = 1;
+        },
+
+        {
+            cell = PSGroupCell;
+            label = "2. 数据网络";
+            footerText = "标识符 dataNetwork　·　键 data.x / data.y";
+        },
+        {
+            cell = PSSliderCell;
+            label = "水平偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "data.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "垂直偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "data.y";
+            "default" = 0;
+            min = -25; max = 25; showValue = 1; isContinuous = 1;
+        },
+
+        {
+            cell = PSGroupCell;
+            label = "3. Wi-Fi";
+            footerText = "标识符 wifi　·　键 wifi.x / wifi.y";
+        },
+        {
+            cell = PSSliderCell;
+            label = "水平偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "wifi.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "垂直偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "wifi.y";
+            "default" = 0;
+            min = -25; max = 25; showValue = 1; isContinuous = 1;
+        },
+
+        {
+            cell = PSGroupCell;
+            label = "4. 电池";
+            footerText = "标识符 battery　·　键 battery.x / battery.y";
+        },
+        {
+            cell = PSSliderCell;
+            label = "水平偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "battery.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "垂直偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "battery.y";
+            "default" = 0;
+            min = -25; max = 25; showValue = 1; isContinuous = 1;
+        },
+
+        {
+            cell = PSGroupCell;
+            label = "5. 电量百分比";
+            footerText = "标识符 batteryDetail　·　键 percent.x / percent.y";
+        },
+        {
+            cell = PSSliderCell;
+            label = "水平偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "percent.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "垂直偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "percent.y";
+            "default" = 0;
+            min = -25; max = 25; showValue = 1; isContinuous = 1;
+        },
+
+        {
+            cell = PSGroupCell;
+            label = "6. 时间";
+            footerText = "标识符 timeString　·　键 time.x / time.y";
+        },
+        {
+            cell = PSSliderCell;
+            label = "水平偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "time.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "垂直偏移";
+            defaults = "com.minis.statusbarmover";
+            key = "time.y";
+            "default" = 0;
+            min = -25; max = 25; showValue = 1; isContinuous = 1;
+        },
+
+        {
+            cell = PSGroupCell;
+            label = "其他常用图标";
+            footerText = "这些不在上面六项里，直接用插件实测到的标识符作为键。值为 0 时无效果。";
+        },
+        {
+            cell = PSSliderCell;
+            label = "蓝牙 水平";
+            defaults = "com.minis.statusbarmover";
+            key = "bluetooth.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "定位 水平";
+            defaults = "com.minis.statusbarmover";
+            key = "location.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "闹钟 水平";
+            defaults = "com.minis.statusbarmover";
+            key = "alarm.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSSliderCell;
+            label = "运营商文字 水平";
+            defaults = "com.minis.statusbarmover";
+            key = "rawSignal.x";
+            "default" = 0;
+            min = -60; max = 60; showValue = 1; isContinuous = 1;
+        },
+        {
+            cell = PSGroupCell;
+            footerText = "重置：把任意滑块拖回 0 即可；或删除 /var/mobile/Library/Preferences/com.minis.statusbarmover.plist 后重启 SpringBoard。";
+        }
+    );
+}

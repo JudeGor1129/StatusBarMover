@@ -1,0 +1,8 @@
+{
+    entry = {
+        bundle = "StatusBarMoverListPrefs";
+        cell = "PSLinkCell";
+        isController = 1;
+        label = "状态栏图标位置（列表调节）";
+    };
+}
