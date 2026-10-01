@@ -1,10 +1,14 @@
 #!/bin/sh
-# StatusBarMover 2.0.9 安装脚本
+# StatusBarMover 2.0.10 安装脚本
+#
+# ★ 这里绝对不能 killall SpringBoard：
+#   安装时 Sileo/Zebra 自己就跑在 SpringBoard 进程里，postinst 阶段把它杀掉
+#   等于让 dpkg 在收尾时被中断 —— 表现就是「一安装就一直转圈」。
+#   2.0.9 犯过这个错，2.0.10 起一律不主动重启，由用户在 Sileo 里点「重启」。
+#
+# 本脚本只做两件事（全部失败不影响安装结果，永远 exit 0）：
 #   1) 清理历史版本遗留（旧 bundle / 旧 PreferenceLoader 入口 / 旧注入 dylib）
-#      —— 这些都会让「设置」App 闪退，必须先铲掉
 #   2) 写入一组测试偏移，用来验证「调节位置」是否真的生效
-#   3) 重启 SpringBoard
-set -e
 
 JB=/var/jb
 PREFS=/var/mobile/Library/Preferences/com.minis.statusbarmover.plist
@@ -15,12 +19,13 @@ rm -rf "$JB/Library/PreferenceBundles/StatusBarMoverPrefs.bundle" \
        "$JB/Library/PreferenceLoader/Preferences/StatusBarMover.plist" \
        "$JB/Library/PreferenceLoader/Preferences/StatusBarMoverList.plist" \
        "$JB/Library/MobileSubstrate/DynamicLibraries/StatusBarMoverPrefs.dylib" \
-       "$JB/Library/MobileSubstrate/DynamicLibraries/StatusBarMoverPrefs.plist"
+       "$JB/Library/MobileSubstrate/DynamicLibraries/StatusBarMoverPrefs.plist" \
+       >/dev/null 2>&1 || true
 
 # ---- 2. 写入测试偏移 -------------------------------------------------------
-#      signal  = 信号      -> 右移 12pt
-#      wifi    = Wi-Fi     -> 左移 12pt
-#      battery = 电池      -> 上移 6pt
+#      signal  = 信号   -> 右移 12pt
+#      wifi    = Wi-Fi  -> 左移 12pt
+#      battery = 电池   -> 上移 6pt
 cat > "$PREFS" <<'PLISTEOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -42,9 +47,8 @@ cat > "$PREFS" <<'PLISTEOF'
 </plist>
 PLISTEOF
 
-chown mobile:mobile "$PREFS" 2>/dev/null || true
-chmod 644 "$PREFS"
+chown mobile:mobile "$PREFS" >/dev/null 2>&1 || true
+chmod 644 "$PREFS" >/dev/null 2>&1 || true
 
-# ---- 3. 重启 SpringBoard ---------------------------------------------------
-killall -9 SpringBoard 2>/dev/null || true
+# ---- 故意不重启 SpringBoard（见文件头说明）--------------------------------
 exit 0
