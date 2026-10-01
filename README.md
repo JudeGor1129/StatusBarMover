@@ -1,135 +1,104 @@
-# StatusBarMover 2.0
+# CarPlayWalls
 
-自由调节 iOS 状态栏图标位置 —— **信号 / 数据网络 / Wi-Fi / 电池 / 电量百分比 / 时间**，每一项都能独立设置水平与垂直偏移。
-
-> 适用环境：**iPhone 13 Pro Max · iOS 15.4.1 · XinaA15 (xina2) 无根越狱**
-> 版本：2.0.0 · 包名 `com.minis.statusbarmover` · SpringBoard 注入
+为 **CarPlay 的浅色 / 深色（日夜）模式分别指定自定义壁纸** 的越狱插件。
+iOS 15.x · rootless（XinaA15 / xina2，安装到 `/var/jb`）。
 
 ---
 
-## 一、这一版有什么
+## 一、原理（为什么这么做）
 
-| | |
-|---|---|
-| **可拖动的实时预览** | 设置页顶部就是一条模拟状态栏。**按住图标直接拖**，松手即生效 —— 拖的不是示意图，用的就是插件运行时那套偏移逻辑，屏幕上真实的状态栏会同步跟着动。双击图标 = 复位该项。 |
-| **六个常用图标各一组滑块** | 信号 / 数据网络 / Wi-Fi / 电池 / 电量百分比 / 时间，每组都有「水平偏移 ±60pt」「垂直偏移 ±25pt」两条滑块，用于 ±1pt 的精细修正。 |
-| **自动识别本机图标** | 插件在运行时实测发现你设备上真实存在的状态栏图标，写进 `items.plist`；设置页读取它自动生成条目，不需要你填任何标识符。 |
-| **全部图标（高级）** | 蓝牙、定位、闹钟、运营商文字…… 各种边角图标都在这一页，一个都不会漏。 |
-| **非破坏性偏移** | 偏移以 `CGAffineTransform` 平移实现，**绝不触碰 frame**，与系统布局引擎零反馈，不会触发 watchdog。 |
-| **POSIX 紧急开关** | 万一装出问题，`touch` 一个文件 + 重启 SpringBoard 就能停用，不需要卸载。 |
-
----
-
-## 二、目录结构
+CarPlay 桌面壳进程是 **`com.apple.CarPlayApp`**，它画壁纸时走的是
+`CarPlayUIServices.framework` 里的私有类：
 
 ```
-StatusBarMover/
-├── Tweak.x                      # 插件本体：hook _UIStatusBarItemView 并施加 transform
-├── Makefile                     # 主工程（rootless）
-├── control                      # deb 元信息
-├── StatusBarMover.plist         # 注入过滤：仅 SpringBoard
-├── build.sh                     # 本地一键打包
-├── .github/workflows/build.yml  # 推送到 GitHub 自动编译出 .deb
-└── prefs/
-    ├── Makefile
-    ├── entry.plist              # 设置页入口（设置 → 状态栏图标位置）
-    ├── SBMCommon.h              # 共用常量 / 偏好读写 / 图标分类 / 诊断
-    ├── SBMRootListController.m  # 主设置页：实时预览 + 六组滑块
-    ├── SBMPreviewView.h/.m      # 可拖动的状态栏预览视图
-    └── SBMItemsController.m     # 「全部图标（高级）」页
+CRSUIWallpaperPreferences.defaultWallpaper   →  CRSUIWallpaper 实例
+[CRSUIWallpaper wallpaperImageCompatibleWithTraitCollection:tc]  →  UIImage
 ```
 
----
+`tc.userInterfaceStyle` 就是车机当前的外观（浅色 / 深色），
+所以 `-wallpaperImageCompatibleWithTraitCollection:` **就是**「浅色/深色分别换壁纸」
+的唯一正确 Hook 点。
 
-## 三、编译
+本插件只把该方法的**返回值**换成你的图片：
 
-### 方式 A：GitHub Actions（推荐，不用装任何环境）
+* 不碰 frame / 布局 / 视图层级 → **零 watchdog 风险**
+* 任何异常都被 `@try` 吞掉，最坏情况 = 退回系统原图
+* 附带 `-supportsDynamicAppearance` 返回 YES，确保系统会按日夜重新取图
 
-1. 把本仓库内容推到 GitHub 的 `main` 分支；
-2. 打开仓库 **Actions → Build .deb → Run workflow**；
-3. 跑完后在该次运行页面底部的 **Artifacts** 里下载 `StatusBarMover-deb`，解压得到 `.deb`。
+（该接口在 iOS 14 / 15 / 16 / 17 的头文件中完全一致，iOS 18 起部分职责挪到
+`CRSUISystemWallpaper`。）
 
-### 方式 B：本地 Theos
+## 二、注入范围
 
-```bash
-export THEOS=/opt/theos
-./build.sh
-# 产物在 packages/*.deb
-```
+| 进程 | 用途 |
+| --- | --- |
+| `com.apple.CarPlayApp` | CarPlay 桌面壳（真正画壁纸的进程） |
+| `com.apple.springboard` | 兜底（CarPlay 显示在手机屏幕的场景） |
+| `com.apple.CarPlayWallpaper` | 壁纸选择器（若存在，缩略图也一并替换） |
+| `com.apple.Preferences` | 设置界面（单独一个 dylib，见下） |
 
----
+**设置界面为什么是单独一个 dylib**：PreferenceLoader 2.x 源码写死了
+`if(!entry) continue;`，没有 `entry` 键的纯 plist 页面不会被注册；而带 `entry`
+的代码 bundle 需要 Preferences 去 `dlopen` 我们的二进制，在这台设备上会在
+dyld 映射镜像、libobjc `readClass` 阶段 SIGBUS。改走「注入器注入」这条已验证可用的
+路径，可以完全绕开 dlopen。
 
-## 四、安装
+## 三、安装
 
-1. 把 `.deb` 传到手机（AirDrop / 文件 App / 邮件都行）；
-2. 用 **Sileo** 或 **Zebra** 打开并安装（无根环境会自动装到 `/var/jb/...`）；
-3. 安装后会自动重启 SpringBoard；
-4. 进入 **设置 → 状态栏图标位置** 开始调节。
+1. Actions 页面（`Build .deb`）下载 artifact 里的 `.deb`；
+2. 用 Sileo / Zebra 安装；
+3. **不要**在安装后立刻重启；先去看设置里有没有出现 **「CarPlay 壁纸」** 入口
+   （`设置` 根列表底部）。
 
-也可以走 SSH：
+## 四、使用
 
-```bash
-make do THEOS_DEVICE_IP=<手机IP> THEOS_DEVICE_PORT=22
-```
+### 1. 选图（推荐）
+`设置 → CarPlay 壁纸 → 从相册选择浅色/深色壁纸`。
+用 PHPicker，**不需要相册权限**，图片会被压到长边 ≤ 3840 存为
+`/var/mobile/Library/CarPlayWalls/light.jpg` 与 `dark.jpg`。
 
----
+### 2. 或者手动放图（Filza）
+把图片放进 `/var/mobile/Library/CarPlayWalls/`，文件名以 `light` / `dark` 开头即可
+（`light.png`、`dark.heic` 都能认）。配置页里也能直接填绝对路径。
 
-## 五、使用
+### 3. 生效方式（全程在手机上，车机端不用点任何东西）
+选图保存后，插件会**自动向车机进程下发一次刷新**：车机侧插件收到通知后清空图片缓存、
+就地重刷壁纸视图，画面在 1~2 秒内换成新图。
+若某次没有立刻变化，回设置页点 **「立即应用到车机（原地刷新）」**；
+还不行就点 **「重启 CarPlay 画面」**（车机黑屏几秒后自动重载，属兜底手段）。
+配置存在手机上，**重新插拔数据线后也一定生效**。
 
-- 打开设置页，顶部就是预览条。**按住信号 / Wi-Fi / 电池等图标左右上下拖动**，屏幕顶部真实的状态栏会同步变化。
-- 想精确到 1pt，用下面每一组的**水平偏移 / 垂直偏移**滑块。
-- 「当前数值」一行显示该项目前的 X / Y；「重置全部偏移」一键归零。
-- 改完**不需要重启**，插件收到通知后会立刻重新布局。
+### 4. 建议
+图片比例尽量与车机屏幕一致（如 `1920×720`、`800×480`），避免被拉伸。
+只放一张浅色图时，勾选「深色图自动生成」会自动压暗 45% 作为夜间壁纸。
 
-### 紧急开关（装坏了进安全模式时用）
+## 五、诊断与排错
 
-```bash
-touch /var/mobile/Library/Preferences/com.minis.statusbarmover.disable
-# 然后重启 SpringBoard；删除该文件即可恢复
-```
+* 打开 `诊断模式` → 在车里跑一会儿 → 回到设置页点 `查看诊断结果`。
+* 诊断数据同时写在
+  `/var/mobile/Library/Preferences/com.minis.carplaywalls.dump.plist`，
+  内容包括：宿主进程、`CRSUIWallpaper` 是否存在、命中的方法次数、
+  运行时所有含 `Wallpaper` 的类名。
+* **紧急关停**：用 Filza 新建空文件
+  `/var/mobile/Library/Preferences/com.minis.carplaywalls.disable`
+  （插件每 2 秒检查一次，立即生效）。重新安装 deb 会自动清掉它。
 
----
-
-## 六、实现原理与稳定性设计
-
-**Hook 点**：状态栏里每个图标都是一个 `_UIStatusBarItemView` 实例。插件 hook 它的
-`setFrame:` / `layoutSubviews` / `didMoveToSuperview`，在系统布局完成后叠加一个平移变换。
-
-**为什么用 transform 而不是直接改 frame**：frame 由系统布局引擎掌管，直接改会在下一次布局被覆盖，
-并且会和布局引擎互相反馈，极易触发 SpringBoard 看门狗崩溃。transform 属于渲染层叠加，
-不参与约束解算，所以完全无副作用。
-
-**为什么构造函数里一行 Foundation 代码都不能有**：1.0.0–1.0.3 全部在 `%ctor` 里崩溃
-（EXC_BAD_ACCESS / SIGBUS）。原因是 dyld 还在执行 image initializer 的阶段
-（jbinjector → 本 dylib 构造函数）就调用了 Foundation / CoreFoundation，
-此时 ObjC 常量字符串的类引用尚未绑定 —— 这是硬件信号，`@try` 抓不住。因此：
-
-- `%ctor` 里只有 `%init;`；
-- 所有初始化（读偏好、注册通知）用 `dispatch_once` 延迟到**第一次状态栏布局**时执行；
-- 紧急开关用 POSIX `access()` 检查纯 C 字符串路径，连常量 `NSString` 都不碰。
-
----
-
-## 七、常见问题
-
-**Q：设置页里某一组显示「未检测到」？**
-说明系统当前没有创建那个图标视图（比如 Wi-Fi 关着的时候）。开着对应功能、回到本页即可；
-也可以先在那一组里调，等图标出现后偏移会自动套用。
-
-**Q：某一项拖了没反应？**
-去「全部图标（高级）」页，点「复制诊断信息到剪贴板」，把清单发出来做精确适配。
-
-**Q：和别的状态栏插件冲突？**
-同类插件（NiceBarX 等）会接管同一批视图，建议只留一个。
-
----
-
-## 八、偏好键约定
+## 六、工程结构
 
 ```
-<identifier>.x   水平偏移（pt）
-<identifier>.y   垂直偏移（pt）
+Makefile                    主 tweak（arm64 + arm64e，rootless）
+CarPlayWalls.plist          注入过滤器
+Tweak.x                     核心 Hook + 诊断
+prefs/                      设置界面子工程（只注入 com.apple.Preferences）
+  ├─ CPWInject.xm           往设置根列表塞入口
+  ├─ CPWRootListController.m 设置页（含相册选图）
+  └─ CarPlayWallsPrefs.plist 过滤器
+layout/DEBIAN/postinst      建目录 / 写默认配置 / 绝不 killall SpringBoard
+.github/workflows/build.yml GitHub Actions 出包
 ```
-`identifier` 是插件在设备上实测发现的字符串，例如
-`wifi` / `battery` / `batteryDetail` / `cellularBars` / `dataNetwork` / `timeString`。
-偏好文件：`/var/mobile/Library/Preferences/com.minis.statusbarmover.plist`
+
+## 七、版本
+
+* **1.0.0** — 首版：`CRSUIWallpaper` 取图替换 + 浅/深分离 + 相册选图 + 诊断。
+* **1.1.0** — 交互对齐 Airaw：手机选图后**自动下发刷新、车机原地生效**（Darwin 通知 + 按图片指针精确重刷，
+  不依赖视图类名）；新增「立即应用 / 重启 CarPlay 画面」按钮与「车机端最近取图」状态显示。
