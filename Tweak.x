@@ -50,6 +50,7 @@ static const char     *kKillPathC  = "/var/mobile/Library/Preferences/com.minis.
 
 static BOOL                 gKill    = NO;
 static BOOL                 gEnabled = YES;
+static BOOL                 gPrefsFound = NO;   // 偏好文件是否存在（自检用）
 static NSDictionary        *gOffsets = nil;   // { 键: { x: NSNumber, y: NSNumber } }
 static NSMutableDictionary *gSeen    = nil;   // { 标识符: 类名 } —— 供诊断
 static BOOL                 gWritePending = NO;
@@ -63,6 +64,7 @@ static void LoadPrefs(void) {
         // 这样设置页（另一个进程）写入后能立刻被 SpringBoard 看到。
         NSDictionary *all = [NSDictionary dictionaryWithContentsOfFile:
                              @"/var/mobile/Library/Preferences/com.minis.statusbarmover.plist"];
+        gPrefsFound = [all isKindOfClass:NSDictionary.class];
         if (![all isKindOfClass:NSDictionary.class]) all = @{};
 
         id en = all[@"enabled"];
@@ -239,6 +241,15 @@ static void SBMApplyTransform(UIView *v) {
                     SBMScheduleWrite();
                 }
                 NSDictionary *off = SBMOffsetFor(key, NSStringFromClass(v.class));
+                if (!off && !gPrefsFound) {
+                    // ── 自检兜底（仅当偏好文件完全不存在时生效）──────────────
+                    // 给「信号」图标一个明显的固定偏移。这样一次安装就能区分三种情况：
+                    //   · 信号移动 12pt、Wi-Fi 移动 -12pt → 偏好链路整体正常
+                    //   · 只有信号移动 20pt            → hook 正常，偏好读取有问题
+                    //   · 什么都不动                   → hook 未生效（或未注入）
+                    NSString *cat = SBMCategoryFor(key, NSStringFromClass(v.class));
+                    if ([cat isEqualToString:@"signal"]) off = @{ @"x": @20, @"y": @0 };
+                }
                 if (off) {
                     CGFloat dx = [off[@"x"] doubleValue];
                     CGFloat dy = [off[@"y"] doubleValue];

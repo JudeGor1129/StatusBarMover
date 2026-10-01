@@ -1,0 +1,50 @@
+#!/bin/sh
+# StatusBarMover 2.0.9 安装脚本
+#   1) 清理历史版本遗留（旧 bundle / 旧 PreferenceLoader 入口 / 旧注入 dylib）
+#      —— 这些都会让「设置」App 闪退，必须先铲掉
+#   2) 写入一组测试偏移，用来验证「调节位置」是否真的生效
+#   3) 重启 SpringBoard
+set -e
+
+JB=/var/jb
+PREFS=/var/mobile/Library/Preferences/com.minis.statusbarmover.plist
+
+# ---- 1. 清理遗留 -----------------------------------------------------------
+rm -rf "$JB/Library/PreferenceBundles/StatusBarMoverPrefs.bundle" \
+       "$JB/Library/PreferenceBundles/StatusBarMoverListPrefs.bundle" \
+       "$JB/Library/PreferenceLoader/Preferences/StatusBarMover.plist" \
+       "$JB/Library/PreferenceLoader/Preferences/StatusBarMoverList.plist" \
+       "$JB/Library/MobileSubstrate/DynamicLibraries/StatusBarMoverPrefs.dylib" \
+       "$JB/Library/MobileSubstrate/DynamicLibraries/StatusBarMoverPrefs.plist"
+
+# ---- 2. 写入测试偏移 -------------------------------------------------------
+#      signal  = 信号      -> 右移 12pt
+#      wifi    = Wi-Fi     -> 左移 12pt
+#      battery = 电池      -> 上移 6pt
+cat > "$PREFS" <<'PLISTEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>enabled</key>
+	<true/>
+	<key>signal.x</key>
+	<real>12</real>
+	<key>signal.y</key>
+	<real>0</real>
+	<key>wifi.x</key>
+	<real>-12</real>
+	<key>wifi.y</key>
+	<real>0</real>
+	<key>battery.y</key>
+	<real>-6</real>
+</dict>
+</plist>
+PLISTEOF
+
+chown mobile:mobile "$PREFS" 2>/dev/null || true
+chmod 644 "$PREFS"
+
+# ---- 3. 重启 SpringBoard ---------------------------------------------------
+killall -9 SpringBoard 2>/dev/null || true
+exit 0

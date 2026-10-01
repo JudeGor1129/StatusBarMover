@@ -15,8 +15,10 @@ StatusBarMover_FRAMEWORKS = UIKit
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-SUBPROJECTS += prefs
-include $(THEOS_MAKE_PATH)/aggregate.mk
+# 2.0.9 起临时只出「状态栏本体」：设置界面（prefs 子工程）先不打包，
+# 避免它影响「设置」App。等核心功能确认生效后再单独恢复。
+# SUBPROJECTS += prefs
+# include $(THEOS_MAKE_PATH)/aggregate.mk
 
 after-install::
 	install.exec "killall -9 SpringBoard"
